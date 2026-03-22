@@ -1,41 +1,68 @@
 #!/bin/bash
 
-cd /home/container
+cd /home/container || exit 1
 
 GAME_PORT=${SERVER_PORT:-7777}
 VOICE_PORT=${VOICE_PORT:-7070}
 VOICE_PROXY=${VOICE_PROXY:-1}
 
+printf "\033[1m[Startup]\033[0m Port: %s | Voice proxy: %s | Voice port: %s\n" "$GAME_PORT" "$VOICE_PROXY" "$VOICE_PORT"
+
+if [ ! -f "./samp03svr" ]; then
+    printf "\033[1;31m[Startup] samp03svr not found. Please reinstall the server.\033[0m\n"
+    sleep 10
+    exit 1
+fi
+
+chmod +x ./samp03svr 2>/dev/null
+chmod +x ./announce 2>/dev/null
+
 if [ "$VOICE_PROXY" = "1" ] && [ -f "plugins/sampvoice.so" ]; then
     for d in . plugins scriptfiles; do
         mkdir -p "$d" 2>/dev/null
-        printf "voice_host = 0.0.0.0\nvoice_port = %s\n" "$VOICE_PORT" > "$d/control.cfg"
-        printf "voice_host = 0.0.0.0\nvoice_port = %s\n" "$VOICE_PORT" > "$d/voice.cfg"
+        printf "voice_host = 0.0.0.0\nvoice_port = %s\n" "$VOICE_PORT" > "$d/control.cfg" 2>/dev/null
+        printf "voice_host = 0.0.0.0\nvoice_port = %s\n" "$VOICE_PORT" > "$d/voice.cfg" 2>/dev/null
     done
     if [ -f "server.cfg" ]; then
         sed -i '/^sv_voiceport/d' server.cfg
         printf "sv_voiceport %s\n" "$VOICE_PORT" >> server.cfg
     fi
+    printf "\033[1m[Startup]\033[0m Voice config applied\n"
 fi
 
 if [ "$VOICE_PROXY" != "1" ]; then
+    printf "\033[1m[Startup]\033[0m Starting SA-MP server\n"
     exec env LD_LIBRARY_PATH=./plugins:. ./samp03svr
 fi
 
-BEFORE=$(ss -uln 2>/dev/null | awk '{print $5}' | grep -o '[0-9]*$' | sort -un)
+printf "\033[1m[Startup]\033[0m Starting SA-MP server with voice proxy\n"
+
+get_udp_ports() {
+    ss -uln 2>/dev/null | awk 'NR>1 {n=split($5,a,":"); if(a[n]+0>0) print a[n]}' | sort -un
+}
+
+BEFORE=$(get_udp_ports)
 
 LD_LIBRARY_PATH=./plugins:. ./samp03svr &
 SAMP_PID=$!
 
+sleep 3
+
+if ! kill -0 "$SAMP_PID" 2>/dev/null; then
+    printf "\033[1;31m[Startup] SA-MP server failed to start\033[0m\n"
+    wait $SAMP_PID 2>/dev/null
+    exit $?
+fi
+
 VOICE_DETECTED=""
-for i in $(seq 1 15); do
+for _ in $(seq 1 12); do
     sleep 2
     if ! kill -0 "$SAMP_PID" 2>/dev/null; then
-        wait $SAMP_PID
+        wait $SAMP_PID 2>/dev/null
         exit $?
     fi
-    AFTER=$(ss -uln 2>/dev/null | awk '{print $5}' | grep -o '[0-9]*$' | sort -un)
-    for port in $(comm -13 <(echo "$BEFORE") <(echo "$AFTER")); do
+    AFTER=$(get_udp_ports)
+    for port in $(comm -13 <(echo "$BEFORE") <(echo "$AFTER") 2>/dev/null); do
         if [ "$port" != "$GAME_PORT" ] && [ "$port" != "$VOICE_PORT" ] && [ "$port" -gt 1024 ] 2>/dev/null; then
             VOICE_DETECTED=$port
             break 2
@@ -46,14 +73,14 @@ done
 if [ -n "$VOICE_DETECTED" ] && [ "$VOICE_DETECTED" != "$VOICE_PORT" ]; then
     if ! ss -uln 2>/dev/null | grep -q ":${VOICE_PORT} "; then
         socat UDP4-LISTEN:${VOICE_PORT},fork,reuseaddr UDP4:127.0.0.1:${VOICE_DETECTED} &
-        echo "[VoiceProxy] Forwarding UDP :${VOICE_PORT} -> :${VOICE_DETECTED}"
+        printf "\033[1;32m[VoiceProxy] Forwarding :%s -> :%s\033[0m\n" "$VOICE_PORT" "$VOICE_DETECTED"
     else
-        echo "[VoiceProxy] Voice server on correct port ${VOICE_PORT}"
+        printf "\033[1;32m[VoiceProxy] Voice on port %s\033[0m\n" "$VOICE_PORT"
     fi
-elif [ -z "$VOICE_DETECTED" ]; then
-    echo "[VoiceProxy] No voice server detected, proxy not needed"
+elif [ "$VOICE_DETECTED" = "$VOICE_PORT" ]; then
+    printf "\033[1;32m[VoiceProxy] Voice on port %s\033[0m\n" "$VOICE_PORT"
 else
-    echo "[VoiceProxy] Voice server on correct port ${VOICE_PORT}"
+    printf "\033[1;33m[VoiceProxy] No voice server detected\033[0m\n"
 fi
 
 wait $SAMP_PID
