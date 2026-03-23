@@ -21,6 +21,14 @@ if [ "$VOICE_PROXY" = "1" ] && [ -f "plugins/sampvoice.so" ]; then
     if [ -f "server.cfg" ]; then
         sed -i '/^sv_voiceport/d' server.cfg
         printf "sv_voiceport %s\n" "$VOICE_PORT" >> server.cfg
+        if ! grep -q 'sampvoice' server.cfg 2>/dev/null; then
+            if grep -q '^plugins' server.cfg; then
+                sed -i 's/^plugins\s*\(.*\)/plugins \1 sampvoice/' server.cfg
+            else
+                printf "plugins sampvoice\n" >> server.cfg
+            fi
+            printf "\033[1;33m[Startup]\033[0m Added sampvoice to server.cfg plugins line\n"
+        fi
     fi
     printf "\033[1m[Startup]\033[0m Voice config applied (sv_voiceport %s)\n" "$VOICE_PORT"
 fi
@@ -48,6 +56,15 @@ fi
 > /tmp/samp.log
 LD_PRELOAD="$PRELOAD" LD_LIBRARY_PATH=./plugins:. ./samp03svr >> /tmp/samp.log 2>&1 &
 SAMP_PID=$!
+sleep 1
+if [ -n "$PRELOAD" ]; then
+    if grep -q 'VoiceHook.*loaded' /tmp/samp.log 2>/dev/null; then
+        printf "\033[1;32m[VoiceHook] Hook loaded successfully\033[0m\n"
+    else
+        printf "\033[1;31m[VoiceHook] Hook did NOT load! First lines of log:\033[0m\n"
+        head -5 /tmp/samp.log 2>/dev/null | sed 's/^/  /'
+    fi
+fi
 tail -f /tmp/samp.log &
 TAIL_PID=$!
 
