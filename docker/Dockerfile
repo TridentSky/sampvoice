@@ -17,6 +17,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /voicefix.so /usr/lib/voicefix.so
+RUN echo "/usr/lib/voicefix.so" > /etc/ld.so.preload
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && sed -i 's/\r$//' /entrypoint.sh
 

@@ -6,6 +6,12 @@
 #include <string.h>
 #include <stdio.h>
 
+__attribute__((constructor))
+static void voicefix_init(void) {
+    if (getenv("SV_VOICE_PORT"))
+        fprintf(stderr, "[VoiceHook] voicefix.so loaded (pid=%d)\n", getpid());
+}
+
 int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     int (*real_bind)(int, const struct sockaddr *, socklen_t);
     real_bind = (int (*)(int, const struct sockaddr *, socklen_t))dlsym(RTLD_NEXT, "bind");

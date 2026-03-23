@@ -31,6 +31,9 @@ if [ "$VOICE_PROXY" = "1" ] && [ -f "plugins/sampvoice.so" ]; then
         fi
     fi
     printf "\033[1m[Startup]\033[0m Voice config applied (sv_voiceport %s)\n" "$VOICE_PORT"
+    printf "\033[1;36m[Startup]\033[0m sampvoice.so check:\n"
+    file plugins/sampvoice.so 2>&1 | sed 's/^/  /'
+    ldd plugins/sampvoice.so 2>&1 | grep -i 'not found' | sed 's/^/  /'
 fi
 
 if [ "$VOICE_PROXY" != "1" ]; then
@@ -40,28 +43,24 @@ fi
 
 printf "\033[1m[Startup]\033[0m Starting SA-MP server with voice hook\n"
 
-PRELOAD=""
-if [ -f "/usr/lib/voicefix.so" ]; then
-    printf "\033[1;36m[VoiceHook] voicefix.so found:\033[0m\n"
-    file /usr/lib/voicefix.so 2>&1 | sed 's/^/  /'
-    file ./samp03svr 2>&1 | sed 's/^/  /'
-    ldd /usr/lib/voicefix.so 2>&1 | sed 's/^/  /'
+HOOK_ACTIVE=0
+if [ -f "/usr/lib/voicefix.so" ] && [ -f "/etc/ld.so.preload" ]; then
     export SV_VOICE_PORT="$VOICE_PORT"
-    PRELOAD="/usr/lib/voicefix.so"
-    printf "\033[1;36m[VoiceHook] LD_PRELOAD active: forcing voice bind to :%s\033[0m\n" "$VOICE_PORT"
+    HOOK_ACTIVE=1
+    printf "\033[1;36m[VoiceHook] /etc/ld.so.preload active: forcing voice bind to :%s\033[0m\n" "$VOICE_PORT"
 else
     printf "\033[1;33m[VoiceHook] voicefix.so not found, falling back to socat proxy\033[0m\n"
 fi
 
 > /tmp/samp.log
-LD_PRELOAD="$PRELOAD" LD_LIBRARY_PATH=./plugins:. ./samp03svr >> /tmp/samp.log 2>&1 &
+LD_LIBRARY_PATH=./plugins:. ./samp03svr >> /tmp/samp.log 2>&1 &
 SAMP_PID=$!
-sleep 1
-if [ -n "$PRELOAD" ]; then
+sleep 3
+if [ "$HOOK_ACTIVE" = "1" ]; then
     if grep -q 'VoiceHook.*loaded' /tmp/samp.log 2>/dev/null; then
         printf "\033[1;32m[VoiceHook] Hook loaded successfully\033[0m\n"
     else
-        printf "\033[1;31m[VoiceHook] Hook did NOT load! First lines of log:\033[0m\n"
+        printf "\033[1;31m[VoiceHook] Hook may not have loaded. First 5 lines:\033[0m\n"
         head -5 /tmp/samp.log 2>/dev/null | sed 's/^/  /'
     fi
 fi
@@ -90,19 +89,8 @@ while kill -0 "$SAMP_PID" 2>/dev/null; do
 
     if [ "$LATEST" = "$VOICE_PORT" ]; then
         printf "\033[1;32m[VoiceProxy] Voice bound to :%s (direct, no proxy needed)\033[0m\n" "$LATEST"
-    elif [ -n "$PRELOAD" ]; then
-        printf "\033[1;33m[VoiceProxy] Hook failed? Voice on :%s instead of :%s, starting socat fallback\033[0m\n" "$LATEST" "$VOICE_PORT"
-        if [ -n "$SOCAT_PIDS" ]; then
-            kill $SOCAT_PIDS 2>/dev/null
-            wait $SOCAT_PIDS 2>/dev/null
-        fi
-        socat UDP4-LISTEN:${VOICE_PORT},fork,reuseaddr UDP4:127.0.0.1:${LATEST} &
-        PID1=$!
-        socat TCP4-LISTEN:${VOICE_PORT},fork,reuseaddr TCP4:127.0.0.1:${LATEST} &
-        PID2=$!
-        SOCAT_PIDS="$PID1 $PID2"
-        printf "\033[1;32m[VoiceProxy] Fallback forwarding :%s -> :%s (TCP+UDP)\033[0m\n" "$VOICE_PORT" "$LATEST"
     else
+        printf "\033[1;33m[VoiceProxy] Voice on :%s, starting proxy to :%s\033[0m\n" "$LATEST" "$VOICE_PORT"
         if [ -n "$SOCAT_PIDS" ]; then
             kill $SOCAT_PIDS 2>/dev/null
             wait $SOCAT_PIDS 2>/dev/null
