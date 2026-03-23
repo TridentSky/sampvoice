@@ -11,8 +11,9 @@ SampVoice picks a random UDP port for voice traffic. In containerized environmen
 The Docker entrypoint automatically:
 1. Writes SampVoice config files with the panel-assigned voice port
 2. Starts the SA-MP server
-3. Detects if the voice server bound to a different port
-4. Proxies the assigned port to the internal port using `socat`
+3. Continuously monitors for voice port bindings in real-time
+4. Proxies the assigned port to the internal port using `socat` (TCP+UDP)
+5. Detects port changes and re-establishes the proxy automatically
 
 No plugin modifications needed. Works with any SampVoice version.
 
@@ -47,13 +48,20 @@ ghcr.io/tridentsky/samp:latest
 Player connects to voice port (7070)
         |
         v
-  socat UDP proxy (if needed)
+  socat TCP+UDP proxy (if needed)
         |
         v
-  SampVoice internal port (random)
+  SampVoice internal port (random, 50000-90000)
         |
         v
   Voice server process
+
+Entrypoint loop (runs while SA-MP is alive):
+  1. Parse new log lines for "voice server running on port XXXXX"
+  2. If new port detected != current proxy target:
+     a. Kill old socat instances
+     b. Start new socat TCP+UDP proxy
+     c. Display status summary
 ```
 
 ## Building

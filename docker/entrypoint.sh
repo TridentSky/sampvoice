@@ -43,25 +43,55 @@ SAMP_PID=$!
 tail -f /tmp/samp.log &
 TAIL_PID=$!
 
-DETECTED=""
-for _ in $(seq 1 30); do
-    sleep 1
-    if ! kill -0 "$SAMP_PID" 2>/dev/null; then
-        break
+ACTIVE_PORT=""
+SOCAT_PIDS=""
+SEEN_PORTS=""
+LOG_LINES=0
+
+printf "\033[1;36m[VoiceProxy] Monitoring voice ports...\033[0m\n"
+
+while kill -0 "$SAMP_PID" 2>/dev/null; do
+    sleep 2
+
+    TOTAL=$(wc -l < /tmp/samp.log 2>/dev/null || echo 0)
+    [ "$TOTAL" -eq "$LOG_LINES" ] && continue
+
+    LATEST=$(tail -n +"$((LOG_LINES + 1))" /tmp/samp.log 2>/dev/null | grep -o 'voice server running on port [0-9]*' | grep -o '[0-9]*$' | tail -1)
+    LOG_LINES=$TOTAL
+
+    [ -z "$LATEST" ] && continue
+    [ "$LATEST" = "$ACTIVE_PORT" ] && continue
+
+    if ! echo "$SEEN_PORTS" | grep -q ":${LATEST}:"; then
+        SEEN_PORTS="${SEEN_PORTS}:${LATEST}:"
     fi
-    DETECTED=$(grep -o 'voice server running on port [0-9]*' /tmp/samp.log 2>/dev/null | grep -o '[0-9]*$' | tail -1)
-    [ -n "$DETECTED" ] && break
+
+    if [ -n "$SOCAT_PIDS" ]; then
+        kill $SOCAT_PIDS 2>/dev/null
+        wait $SOCAT_PIDS 2>/dev/null
+        SOCAT_PIDS=""
+        printf "\033[1;33m[VoiceProxy] Port change: :%s -> :%s\033[0m\n" "$ACTIVE_PORT" "$LATEST"
+    fi
+
+    if [ "$LATEST" = "$VOICE_PORT" ]; then
+        ACTIVE_PORT="$LATEST"
+        printf "\033[1;32m[VoiceProxy] Voice on port %s (direct, no proxy needed)\033[0m\n" "$LATEST"
+    else
+        socat UDP4-LISTEN:${VOICE_PORT},fork,reuseaddr UDP4:127.0.0.1:${LATEST} &
+        PID1=$!
+        socat TCP4-LISTEN:${VOICE_PORT},fork,reuseaddr TCP4:127.0.0.1:${LATEST} &
+        PID2=$!
+        SOCAT_PIDS="$PID1 $PID2"
+        ACTIVE_PORT="$LATEST"
+        printf "\033[1;32m[VoiceProxy] Forwarding :%s -> :%s (TCP+UDP)\033[0m\n" "$VOICE_PORT" "$LATEST"
+    fi
+
+    ALL_SEEN=$(echo "$SEEN_PORTS" | tr ':' ' ' | xargs)
+    printf "\033[1;36m[VoiceProxy] ---- Status ----\033[0m\n"
+    printf "\033[1;36m[VoiceProxy]   External: :%s\033[0m\n" "$VOICE_PORT"
+    printf "\033[1;36m[VoiceProxy]   Internal: :%s\033[0m\n" "$ACTIVE_PORT"
+    printf "\033[1;36m[VoiceProxy]   History:  %s\033[0m\n" "$ALL_SEEN"
+    printf "\033[1;36m[VoiceProxy] ----------------\033[0m\n"
 done
 
-if [ -n "$DETECTED" ] && [ "$DETECTED" != "$VOICE_PORT" ]; then
-    socat UDP4-LISTEN:${VOICE_PORT},fork,reuseaddr UDP4:127.0.0.1:${DETECTED} &
-    socat TCP4-LISTEN:${VOICE_PORT},fork,reuseaddr TCP4:127.0.0.1:${DETECTED} &
-    printf "\033[1;32m[VoiceProxy] Forwarding :%s -> :%s (TCP+UDP)\033[0m\n" "$VOICE_PORT" "$DETECTED"
-elif [ "$DETECTED" = "$VOICE_PORT" ]; then
-    printf "\033[1;32m[VoiceProxy] Voice on port %s\033[0m\n" "$VOICE_PORT"
-else
-    printf "\033[1;33m[VoiceProxy] No voice port detected in server output\033[0m\n"
-fi
-
-wait $SAMP_PID
-kill $TAIL_PID 2>/dev/null
+kill $TAIL_PID $SOCAT_PIDS 2>/dev/null
