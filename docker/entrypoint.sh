@@ -34,6 +34,10 @@ printf "\033[1m[Startup]\033[0m Starting SA-MP server with voice hook\n"
 
 PRELOAD=""
 if [ -f "/usr/lib/voicefix.so" ]; then
+    printf "\033[1;36m[VoiceHook] voicefix.so found:\033[0m\n"
+    file /usr/lib/voicefix.so 2>&1 | sed 's/^/  /'
+    file ./samp03svr 2>&1 | sed 's/^/  /'
+    ldd /usr/lib/voicefix.so 2>&1 | sed 's/^/  /'
     export SV_VOICE_PORT="$VOICE_PORT"
     PRELOAD="/usr/lib/voicefix.so"
     printf "\033[1;36m[VoiceHook] LD_PRELOAD active: forcing voice bind to :%s\033[0m\n" "$VOICE_PORT"
