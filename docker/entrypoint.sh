@@ -18,16 +18,11 @@ chmod +x ./samp03svr 2>/dev/null
 chmod +x ./announce 2>/dev/null
 
 if [ "$VOICE_PROXY" = "1" ] && [ -f "plugins/sampvoice.so" ]; then
-    for d in . plugins scriptfiles; do
-        mkdir -p "$d" 2>/dev/null
-        printf "voice_host = 0.0.0.0\nvoice_port = %s\n" "$VOICE_PORT" > "$d/control.cfg" 2>/dev/null
-        printf "voice_host = 0.0.0.0\nvoice_port = %s\n" "$VOICE_PORT" > "$d/voice.cfg" 2>/dev/null
-    done
     if [ -f "server.cfg" ]; then
         sed -i '/^sv_voiceport/d' server.cfg
         printf "sv_voiceport %s\n" "$VOICE_PORT" >> server.cfg
     fi
-    printf "\033[1m[Startup]\033[0m Voice config applied\n"
+    printf "\033[1m[Startup]\033[0m Voice config applied (sv_voiceport %s)\n" "$VOICE_PORT"
 fi
 
 if [ "$VOICE_PROXY" != "1" ]; then
@@ -35,17 +30,25 @@ if [ "$VOICE_PROXY" != "1" ]; then
     exec env LD_LIBRARY_PATH=./plugins:. ./samp03svr
 fi
 
-printf "\033[1m[Startup]\033[0m Starting SA-MP server with voice proxy\n"
+printf "\033[1m[Startup]\033[0m Starting SA-MP server with voice hook\n"
+
+PRELOAD=""
+if [ -f "/usr/lib32/voicefix.so" ]; then
+    export SV_VOICE_PORT="$VOICE_PORT"
+    PRELOAD="/usr/lib32/voicefix.so"
+    printf "\033[1;36m[VoiceHook] LD_PRELOAD active: forcing voice bind to :%s\033[0m\n" "$VOICE_PORT"
+else
+    printf "\033[1;33m[VoiceHook] voicefix.so not found, falling back to socat proxy\033[0m\n"
+fi
 
 > /tmp/samp.log
-LD_LIBRARY_PATH=./plugins:. ./samp03svr >> /tmp/samp.log 2>&1 &
+LD_PRELOAD="$PRELOAD" LD_LIBRARY_PATH=./plugins:. ./samp03svr >> /tmp/samp.log 2>&1 &
 SAMP_PID=$!
 tail -f /tmp/samp.log &
 TAIL_PID=$!
 
 ACTIVE_PORT=""
 SOCAT_PIDS=""
-SEEN_PORTS=""
 LOG_LINES=0
 
 printf "\033[1;36m[VoiceProxy] Monitoring voice ports...\033[0m\n"
@@ -62,35 +65,38 @@ while kill -0 "$SAMP_PID" 2>/dev/null; do
     [ -z "$LATEST" ] && continue
     [ "$LATEST" = "$ACTIVE_PORT" ] && continue
 
-    if ! echo "$SEEN_PORTS" | grep -q ":${LATEST}:"; then
-        SEEN_PORTS="${SEEN_PORTS}:${LATEST}:"
-    fi
-
-    if [ -n "$SOCAT_PIDS" ]; then
-        kill $SOCAT_PIDS 2>/dev/null
-        wait $SOCAT_PIDS 2>/dev/null
-        SOCAT_PIDS=""
-        printf "\033[1;33m[VoiceProxy] Port change: :%s -> :%s\033[0m\n" "$ACTIVE_PORT" "$LATEST"
-    fi
+    ACTIVE_PORT="$LATEST"
 
     if [ "$LATEST" = "$VOICE_PORT" ]; then
-        ACTIVE_PORT="$LATEST"
-        printf "\033[1;32m[VoiceProxy] Voice on port %s (direct, no proxy needed)\033[0m\n" "$LATEST"
-    else
+        printf "\033[1;32m[VoiceProxy] Voice bound to :%s (direct, no proxy needed)\033[0m\n" "$LATEST"
+    elif [ -n "$PRELOAD" ]; then
+        printf "\033[1;33m[VoiceProxy] Hook failed? Voice on :%s instead of :%s, starting socat fallback\033[0m\n" "$LATEST" "$VOICE_PORT"
+        if [ -n "$SOCAT_PIDS" ]; then
+            kill $SOCAT_PIDS 2>/dev/null
+            wait $SOCAT_PIDS 2>/dev/null
+        fi
         socat UDP4-LISTEN:${VOICE_PORT},fork,reuseaddr UDP4:127.0.0.1:${LATEST} &
         PID1=$!
         socat TCP4-LISTEN:${VOICE_PORT},fork,reuseaddr TCP4:127.0.0.1:${LATEST} &
         PID2=$!
         SOCAT_PIDS="$PID1 $PID2"
-        ACTIVE_PORT="$LATEST"
+        printf "\033[1;32m[VoiceProxy] Fallback forwarding :%s -> :%s (TCP+UDP)\033[0m\n" "$VOICE_PORT" "$LATEST"
+    else
+        if [ -n "$SOCAT_PIDS" ]; then
+            kill $SOCAT_PIDS 2>/dev/null
+            wait $SOCAT_PIDS 2>/dev/null
+        fi
+        socat UDP4-LISTEN:${VOICE_PORT},fork,reuseaddr UDP4:127.0.0.1:${LATEST} &
+        PID1=$!
+        socat TCP4-LISTEN:${VOICE_PORT},fork,reuseaddr TCP4:127.0.0.1:${LATEST} &
+        PID2=$!
+        SOCAT_PIDS="$PID1 $PID2"
         printf "\033[1;32m[VoiceProxy] Forwarding :%s -> :%s (TCP+UDP)\033[0m\n" "$VOICE_PORT" "$LATEST"
     fi
 
-    ALL_SEEN=$(echo "$SEEN_PORTS" | tr ':' ' ' | xargs)
     printf "\033[1;36m[VoiceProxy] ---- Status ----\033[0m\n"
     printf "\033[1;36m[VoiceProxy]   External: :%s\033[0m\n" "$VOICE_PORT"
     printf "\033[1;36m[VoiceProxy]   Internal: :%s\033[0m\n" "$ACTIVE_PORT"
-    printf "\033[1;36m[VoiceProxy]   History:  %s\033[0m\n" "$ALL_SEEN"
     printf "\033[1;36m[VoiceProxy] ----------------\033[0m\n"
 done
 
