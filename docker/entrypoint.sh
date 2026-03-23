@@ -33,9 +33,9 @@ fi
 printf "\033[1m[Startup]\033[0m Starting SA-MP server with voice hook\n"
 
 PRELOAD=""
-if [ -f "/usr/lib32/voicefix.so" ]; then
+if [ -f "/usr/lib/voicefix.so" ]; then
     export SV_VOICE_PORT="$VOICE_PORT"
-    PRELOAD="/usr/lib32/voicefix.so"
+    PRELOAD="/usr/lib/voicefix.so"
     printf "\033[1;36m[VoiceHook] LD_PRELOAD active: forcing voice bind to :%s\033[0m\n" "$VOICE_PORT"
 else
     printf "\033[1;33m[VoiceHook] voicefix.so not found, falling back to socat proxy\033[0m\n"
